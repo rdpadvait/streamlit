@@ -1,0 +1,87 @@
+/* Main application styles */
+body {
+    background-color: #202123;  /* ChatGPT-like dark gray background */
+    color: #f5f5f5;  /* Whitish text color */
+    font-family: 'Arial', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Arial', sans-serif;
+    color: #f5f5f5;  /* Whitish color for headings */
+    margin-bottom: 16px;
+}
+
+h1 {
+    font-size: 36px;
+    font-weight: bold;
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+h2 {
+    font-size: 28px;
+    margin-bottom: 12px;
+}
+
+h3 {
+    font-size: 24px;
+    margin-bottom: 8px;
+}
+
+/* Question and answer containers */
+.question-container {
+    display: flex;
+    justify-content: flex-end;  /* Align question to the right */
+    margin-right: 20px;
+    margin-bottom: 16px;
+    color: #80cbc4;  /* Light teal for the question text */
+    font-size: 18px;
+    font-style: italic;
+}
+
+.answer-container {
+    width: 100%;  /* Full width for the answer */
+    background-color: #2c2f36;  /* Slightly lighter dark gray */
+    border-radius: 12px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+.answer-container h3 {
+    color: #f5f5f5; /* Whitish color for answer headers */
+}
+
+.answer-container p {
+    color: #f5f5f5;  /* Whitish text for the content */
+    margin: 8px 0;
+}
+
+/* More replies container */
+.more-replies {
+    background-color: #2c2c2c; /* Slightly lighter dark gray */
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 15px;
+    color: #d1d1d1; /* Muted light gray text */
+}
+
+/* Navigation styles */
+.stSelectbox {
+    background-color: #2c2f36;
+    border-radius: 8px;
+}
+
+/* Custom button styles */
+.custom-button {
+    background-color: #3f6d85;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.custom-button:hover {
+    background-color: #4d8aa9;
+} 

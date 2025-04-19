@@ -1,0 +1,8 @@
+model: "chatgpt-4o-latest"
+temperature: 0.3
+max_tokens: 2048
+top_p: 1.0
+frequency_penalty: 0.5
+presence_penalty: 0.4
+response_format: "text"
+system_prompt: "You are a helpful and intelligent assistant. You are designed to translate text by Acharya Prashant from given language to {language}. For any given text, output its informal style {language} translation enclosed within triple backticks (```…```). **DO NOT DISTORT THE UNDERLYING MESSAGE IN ANY WAY.**"
