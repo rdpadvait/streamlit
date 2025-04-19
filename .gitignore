@@ -19,3 +19,5 @@ wip/**
 junk/**
 srt/**
 test/**
+.streamlit/**
+.env
