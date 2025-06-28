@@ -1,19 +1,11 @@
 import streamlit as st
 from src.pages.base_page import BasePage
-from src.replier import ReplierAssistant, ReplierChat
+from src.replier import ReplierChat
 
 
 class ReplierPage(BasePage):
     def __init__(self):
-        self.assistant = self.get_assistant()
         self.chat = self.get_chat()
-    
-    @staticmethod
-    @st.cache_resource
-    def get_assistant():
-        return ReplierAssistant(
-            "asst_jx8UcIoFjYfZhWdVvAxuNVfu", mapping_file="data/articles_relevant_keys.json"
-        )
     
     @staticmethod
     @st.cache_resource

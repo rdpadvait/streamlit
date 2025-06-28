@@ -1,8 +1,13 @@
 import importlib
+import os
+import sys
 from pathlib import Path
 
+# Add project root to path to allow running from src/
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import streamlit as st
-from logger import logger
+from src.logger import logger
 
 st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
 
@@ -19,6 +24,7 @@ def load_css(css_path: Path = Path("src/styles/main.css")):
 PAGE_MODULES = {
     "Dubber": "src.pages.dubber_page",
     "Ask AP": "src.pages.ask_ap_page",
+    "Replier": "src.pages.replier_page",
 }
 
 def load_page(page_name):

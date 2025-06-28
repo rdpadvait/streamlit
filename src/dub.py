@@ -137,7 +137,8 @@ def dub_single_segment(text, lang_code, speaker="AP", gtts_creds=None, start_tim
             logger.warning(warn)
             st.warning(warn)
         change_audio_speed(segment_file, speed_segment_file, speed)
-    return speed_segment_file
+        return speed_segment_file
+    return segment_file
 
 if __name__ == "__main__":
     data = "/tmp/session_1/"

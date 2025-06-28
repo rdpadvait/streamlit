@@ -2,10 +2,6 @@ import logging
 import os
 import subprocess
 
-import ffmpeg
-
-from logger import logger
-
 logger = logging.getLogger(__name__)
 
 def download_video(url, output_path):
@@ -49,35 +45,86 @@ def speed_up_video(input_path, output_path, speed):
 def extract_audio(video_path, output_path):
     logger.info(f"Extracting audio from video: {video_path}")
     assert output_path.endswith(".mp3"), "Output path must end with .mp3"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-vn",
+        "-acodec",
+        "libmp3lame",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        output_path,
+    ]
+    logger.info("Running command: " + " ".join(cmd))
     try:
-        stdout, stderr = (
-            ffmpeg.input(video_path)
-            .output(output_path, vn=None, acodec="libmp3lame", ar=16000, ac=1)
-            .overwrite_output()
-            .run(capture_stdout=True, capture_stderr=True)
-        )
+        subprocess.run(cmd, check=True, capture_output=True)
         if os.path.exists(output_path):
             logger.info(f"Extracted audio to {output_path}")
             return output_path
         else:
             logger.error("Error: Audio was not extracted correctly.")
             return None
-    except ffmpeg.Error as e:
-        logger.error(f"Error extracting audio: {e.stderr.decode()}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr.decode()}")
+        return None
+
+def convert_audio(input_path, output_path):
+    logger.info(f"Converting audio from {input_path} to {output_path}")
+    assert output_path.endswith(".mp3"), "Output path must end with .mp3"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-vn",
+        "-acodec",
+        "libmp3lame",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        output_path,
+    ]
+    logger.info("Running command: " + " ".join(cmd))
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        if os.path.exists(output_path):
+            logger.info(f"Converted audio to {output_path}")
+            return output_path
+        else:
+            logger.error("Error: Converted audio file not created.")
+            return None
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error during audio conversion: {e.stderr.decode()}")
         return None
 
 def change_audio_speed(audio_file, output_file, factor):
     logger.info(f"Speeding by {factor} for {audio_file=} ")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        audio_file,
+        "-filter:a",
+        f"atempo={factor}",
+        output_file,
+    ]
+    logger.info("Running command: " + " ".join(cmd))
     try:
-        stdout, stderr = (
-            ffmpeg.input(audio_file)
-            .filter("atempo", factor)
-            .output(output_file)
-            .overwrite_output()
-            .run(capture_stdout=True, capture_stderr=True)
-        )
-    except ffmpeg.Error as e:
-        logger.error(f"Error adjusting audio speed: {e.stderr.decode()}")
+        subprocess.run(cmd, check=True, capture_output=True)
+        if os.path.exists(output_file):
+            logger.info(f"Changed audio speed for {output_file}")
+            return output_file
+        else:
+            logger.error("Error: Output file not created.")
+            return None
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr.decode()}")
+        return None
 
 def merge_audio_video(video_file, audio_file, output_file):
     cmd = [
