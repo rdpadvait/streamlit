@@ -4,10 +4,9 @@ import time
 from typing import List
 
 import streamlit as st
-from openai import InternalServerError
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
-from logger import logger
+from src.logger import logger
 from src.cmd_utils import (
     convert_audio,
     download_video,
@@ -32,6 +31,18 @@ def ms_to_srt_time(ms: int) -> str:
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+
+
+def srt_time_to_ms(time_str: str) -> int:
+    """Convert SRT time format (HH:MM:SS,ms) to milliseconds."""
+    time_parts = time_str.split(',')
+    hms_part = time_parts[0]
+    ms_part = time_parts[1]
+    
+    h, m, s = map(int, hms_part.split(':'))
+    ms = int(ms_part)
+    
+    return (h * 3600 + m * 60 + s) * 1000 + ms
 
 
 class DubberPage(BasePage):
@@ -67,6 +78,26 @@ class DubberPage(BasePage):
             with open(segments_file, "w") as f:
                 json.dump(st.session_state["segments"], f, indent=2)
             logger.info("Segments saved to file.")
+
+    def add_segment(self, index: int):
+        """Adds a new segment at a specific index."""
+        new_segment = {
+            "start": 0,
+            "end": 1000,
+            "transcript": "",
+            "translation": "",
+            "speaker": "AP",
+            "path": ""
+        }
+        
+        if index > 0 and index <= len(st.session_state["segments"]):
+            prev_segment = st.session_state["segments"][index - 1]
+            new_segment["start"] = prev_segment["end"]
+            new_segment["end"] = prev_segment["end"] + 1000
+        
+        st.session_state["segments"].insert(index, new_segment)
+        self.save_segments()
+        st.rerun()
 
     def setup_session_management(self):
         st.sidebar.title("Session Management")
@@ -226,18 +257,18 @@ class DubberPage(BasePage):
                 transcript = openai_handler.transcribe(chunk_info["path"])
                 chunk_info["transcript"] = transcript
                 chunk_info["speaker"] = "AP"  # Default speaker
-            except InternalServerError as e:
+            except Exception as e:
                 logger.error(f"Failed to transcribe chunk {i+1} due to server error: {e}")
                 chunk_info["transcript"] = "[Transcription failed due to server error]"
                 chunk_info["speaker"] = "AP"
             
             progress_bar.progress((i + 1) / len(chunk_details))
         
-        status_text.text("Transcription complete!")
+        status_text.empty()
         return chunk_details
 
     def segments_section(self, target_lang):
-        st.subheader("2. AI Segmentation")
+        st.subheader("2. Segmentation")
 
         if st.button("Generate Segments"):
             with st.spinner("Chunking and transcribing audio..."):
@@ -273,7 +304,7 @@ class DubberPage(BasePage):
                         st.rerun()
 
             # Header for the segments table
-            cols = st.columns([2, 3, 3, 1, 2])
+            cols = st.columns([1.2, 3.6, 3.6, 0.8, 1.8])
             cols[0].markdown("**Time**")
             cols[1].markdown("**Transcribed Text**")
             cols[2].markdown("**Translated Text**")
@@ -281,15 +312,35 @@ class DubberPage(BasePage):
             cols[4].markdown("**Actions**")
             st.divider()
 
+            if st.button("＋", key="add_at_start", help="Add segment at start"):
+                self.add_segment(0)
+
             for i, segment in enumerate(st.session_state["segments"]):
-                col1, col2, col3, col4, col5 = st.columns([2, 3, 3, 1, 2])
+                col1, col2, col3, col4, col5 = st.columns([1.2, 3.6, 3.6, 0.8, 1.8])
 
                 with col1:
+                    def update_segment_time(idx=i):
+                        try:
+                            start_ms = srt_time_to_ms(st.session_state[f"start_time_{idx}"])
+                            end_ms = srt_time_to_ms(st.session_state[f"end_time_{idx}"])
+                            st.session_state["segments"][idx]["start"] = start_ms
+                            st.session_state["segments"][idx]["end"] = end_ms
+                            self.save_segments()
+                        except Exception as e:
+                            st.error(f"Invalid time format for segment {idx+1}. Use HH:MM:SS,ms. Error: {e}")
+
                     st.text_input(
-                        "Time",
-                        value=f"{ms_to_srt_time(segment['start']).split(',')[0]} -> {ms_to_srt_time(segment['end']).split(',')[0]}",
-                        key=f"time_{i}",
-                        disabled=True,
+                        "Start Time",
+                        value=ms_to_srt_time(segment['start']),
+                        key=f"start_time_{i}",
+                        on_change=update_segment_time,
+                        label_visibility="collapsed"
+                    )
+                    st.text_input(
+                        "End Time",
+                        value=ms_to_srt_time(segment['end']),
+                        key=f"end_time_{i}",
+                        on_change=update_segment_time,
                         label_visibility="collapsed"
                     )
 
@@ -375,52 +426,31 @@ class DubberPage(BasePage):
                     
                     if st.session_state.get(f"preview_audio_{i}"):
                         st.audio(st.session_state[f"preview_audio_{i}"])
+                    
+                    if st.session_state.get('confirm_delete_segment') == i:
+                        st.warning("Do you want to proceed?")
+                        col_yes, col_no = st.columns(2)
+                        with col_yes:
+                            if st.button("Yes", key=f"confirm_delete_{i}"):
+                                del st.session_state["segments"][i]
+                                st.session_state['confirm_delete_segment'] = None
+                                self.save_segments()
+                                st.rerun()
+                        with col_no:
+                            if st.button("No", key=f"cancel_delete_{i}"):
+                                st.session_state['confirm_delete_segment'] = None
+                                st.rerun()
+                    else:
+                        if st.button("🗑️", key=f"delete_seg_{i}", help="Delete segment"):
+                            st.session_state['confirm_delete_segment'] = i
+                            st.rerun()
+
                 st.divider()
 
-    def subtitles_section(self):
-        st.markdown("### Manual Segmentation")
+                if st.button("＋", key=f"add_after_{i}", help="Add segment after"):
+                    self.add_segment(i + 1)
 
-        subtitle_editor()
 
-        if st.button("Upload SRT"):
-            try:
-                out = convert_to_srt(st.session_state)
-                srt_content = out[0]
-
-                # Normalize line endings before processing
-                srt_content = srt_content.replace('\r\n', '\n')
-                blocks = srt_content.strip().split('\n\n')
-                new_blocks = []
-                for block in blocks:
-                    if not block.strip():
-                        continue
-                    
-                    lines = block.split('\n')
-                    if len(lines) >= 2:
-                        index = lines[0]
-                        timestamp = lines[1]
-                        
-                        # Join all text lines, then split by whitespace and join with single spaces
-                        # to merge paragraphs.
-                        text_content = "\n".join(lines[2:])
-                        merged_text = " ".join(text_content.split())
-                        
-                        new_blocks.append(f"{index}\n{timestamp}\n{merged_text}")
-                    else:
-                        new_blocks.append(block)
-                
-                processed_srt = "\n\n".join(new_blocks)
-
-                st.session_state["srt_content"] = processed_srt
-                logger.info(f"SRT uploaded:\n```{st.session_state['srt_content']}```")
-                st.success("Valid SRT uploaded!")
-            except Exception as e:
-                logger.error(f"Error: {e}")
-                st.error(f"Error: {e}")
-
-        if "srt_content" in st.session_state:
-            st.text_area("**Check SRT:**", st.session_state["srt_content"], height=200, disabled=True)
-    
     def dubbing_section(self, target_lang):
         is_video_input = "src_vid" in st.session_state
 
@@ -431,8 +461,18 @@ class DubberPage(BasePage):
                 st.error("Select a target language!")
                 return
 
-            srt_content = st.session_state.get("srt_content")
-            if not srt_content and "segments" in st.session_state:
+            srt_content = None
+            if "segments" in st.session_state:
+                # Sync all widget states to session state before dubbing
+                for i, seg in enumerate(st.session_state["segments"]):
+                    if f"speaker_{i}" in st.session_state:
+                        st.session_state["segments"][i]["speaker"] = st.session_state[f"speaker_{i}"]
+                    if f"transcript_text_{i}" in st.session_state:
+                        st.session_state["segments"][i]["transcript"] = st.session_state[f"transcript_text_{i}"]
+                    if f"translation_text_{i}" in st.session_state:
+                        st.session_state["segments"][i]["translation"] = st.session_state[f"translation_text_{i}"]
+                self.save_segments()
+
                 srt_segments = []
                 for i, segment in enumerate(st.session_state["segments"]):
                     start_time = ms_to_srt_time(segment["start"])
@@ -440,13 +480,15 @@ class DubberPage(BasePage):
                     text = " ".join(
                         segment.get("translation", segment.get("transcript", "")).split()
                     )
+                    speaker = segment.get("speaker", "AP")
+                    text_with_speaker = f"[SPEAKER: {speaker}]\n{text}"
                     srt_segments.append(
-                        f"{i+1}\n{start_time} --> {end_time}\n{text}\n"
+                        f"{i+1}\n{start_time} --> {end_time}\n{text_with_speaker}\n"
                     )
                 srt_content = "\n".join(srt_segments)
 
             if not srt_content:
-                st.error("No content to dub. Please use AI Segmentation or provide content in Manual Segmentation and click 'Upload SRT'.")
+                st.error("No content to dub. Please use Segmentation to generate segments.")
                 return
 
             if is_video_input:
@@ -529,18 +571,7 @@ class DubberPage(BasePage):
                 key="target_language_selectbox"
             )
 
-            # If manual SRT editing has begun, clear auto-generated segments to avoid key conflicts
-            # and give precedence to manual edits.
-            if "srt_rows" in st.session_state and st.session_state.srt_rows:
-                if "segments" in st.session_state:
-                    del st.session_state["segments"]
-
-            tab1, tab2 = st.tabs(["AI Segmentation", "Manual Segmentation"])
-            with tab1:
-                self.segments_section(target_lang)
-            with tab2:
-                self.subtitles_section()
-
+            self.segments_section(target_lang)
             self.dubbing_section(target_lang)
 
 

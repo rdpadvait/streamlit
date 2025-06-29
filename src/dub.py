@@ -8,7 +8,7 @@ import pysrt
 from pydub import AudioSegment
 
 import streamlit as st
-from logger import logger
+from src.logger import logger
 from src.cmd_utils import change_audio_speed, merge_audio_video
 from src.elevenlabs_api import sts
 from src.elevenlabs_api import tts as eleven_tts

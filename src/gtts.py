@@ -6,7 +6,7 @@ from google.cloud.texttospeech import (AudioConfig, AudioEncoding,
                                        VoiceSelectionParams)
 from google.oauth2 import service_account
 
-from logger import logger
+from src.logger import logger
 
 
 def tts(

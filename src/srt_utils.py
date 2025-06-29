@@ -1,6 +1,6 @@
 import pandas as pd
 
-from logger import logger
+from src.logger import logger
 
 
 def convert_time(time_str: str, to_ms: bool = False, segment: int | None = None) -> str | int | None:

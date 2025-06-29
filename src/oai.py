@@ -5,7 +5,7 @@ from typing import Optional
 from omegaconf import OmegaConf
 from openai import OpenAI
 
-from logger import logger
+from src.logger import logger
 
 
 class OpenAIHandler:
