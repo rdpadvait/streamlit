@@ -50,7 +50,7 @@ def process_srt_and_join(
     for i, sub in enumerate(subtitles):
         text = sub.text.strip()
         speaker = "AP"
-        if speaker_match := re.search(r"\[(.*?)\]", text):
+        if speaker_match := re.search(r"\[SPEAKER:\s*(\w+)\]", text):
             if (s := speaker_match.group(1)) in SPEAKERS:
                 speaker = s
             else:
