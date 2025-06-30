@@ -82,6 +82,7 @@ class DubberPage(BasePage):
     def add_segment(self, index: int):
         """Adds a new segment at a specific index."""
         new_segment = {
+            "id": f"segment_{time.time()}",
             "start": 0,
             "end": 1000,
             "transcript": "",
@@ -251,6 +252,7 @@ class DubberPage(BasePage):
         
         for i, chunk_info in enumerate(chunk_details):
             status_text.text(f"Transcribing chunk {i+1}/{len(chunk_details)}...")
+            chunk_info["id"] = f"segment_{time.time()}_{i}"
             
             try:
                 # Transcribe chunk
@@ -269,6 +271,9 @@ class DubberPage(BasePage):
 
     def segments_section(self, target_lang):
         st.subheader("2. Segmentation")
+
+        if "action_status" not in st.session_state:
+            st.session_state.action_status = {}
 
         if st.button("Generate Segments"):
             with st.spinner("Chunking and transcribing audio..."):
@@ -303,152 +308,247 @@ class DubberPage(BasePage):
                         st.success("All segments translated.")
                         st.rerun()
 
+            # Handle delete confirmation dialog
+            if 'confirm_delete_segment' in st.session_state and st.session_state.confirm_delete_segment is not None:
+                segment_to_delete_index = st.session_state.confirm_delete_segment
+
+                @st.dialog("Delete Segment")
+                def confirm_delete_dialog():
+                    st.write(f"Are you sure you want to delete segment {segment_to_delete_index + 1}?")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Yes"):
+                            del st.session_state["segments"][segment_to_delete_index]
+                            self.save_segments()
+                            st.session_state.confirm_delete_segment = None
+                            st.rerun()
+                    with col2:
+                        if st.button("No"):
+                            st.session_state.confirm_delete_segment = None
+                            st.rerun()
+                
+                confirm_delete_dialog()
+
             # Header for the segments table
-            cols = st.columns([1.2, 3.6, 3.6, 0.8, 1.8])
+            cols = st.columns([1.2, 3.6, 3.6, 0.8])
             cols[0].markdown("**Time**")
             cols[1].markdown("**Transcribed Text**")
             cols[2].markdown("**Translated Text**")
             cols[3].markdown("**Speaker**")
-            cols[4].markdown("**Actions**")
             st.divider()
 
-            if st.button("＋", key="add_at_start", help="Add segment at start"):
-                self.add_segment(0)
-
             for i, segment in enumerate(st.session_state["segments"]):
-                col1, col2, col3, col4, col5 = st.columns([1.2, 3.6, 3.6, 0.8, 1.8])
+                if "id" not in segment:
+                    segment["id"] = f"segment_{time.time()}_{i}"
+                segment_id = segment["id"]
+
+                action_cols = st.columns([1, 1, 1, 1, 1, 12])
+                with action_cols[0]:
+                    if st.button("＋", key=f"add_before_{segment_id}", help="Add segment before"):
+                        self.add_segment(i)
+                with action_cols[1]:
+                    action_key = f"listen_{segment_id}"
+                    status = st.session_state.action_status.get(action_key, "idle")
+                    placeholder = st.empty()
+
+                    if status == "loading":
+                        placeholder.text("...")
+                        try:
+                            original_audio = AudioSegment.from_file(self.audio_path)
+                            start_ms = segment["start"]
+                            end_ms = segment["end"]
+                            segment_audio = original_audio[start_ms:end_ms]
+                            
+                            segment_audio_path = os.path.join(self.rootdir, f"original_segment_{segment_id}.mp3")
+                            segment_audio.export(segment_audio_path, format="mp3")
+                            
+                            st.session_state[f"original_audio_preview_{segment_id}"] = segment_audio_path
+                            st.toast("Original audio segment extracted.", icon="✔️")
+                            st.session_state.action_status[action_key] = "idle"
+                        except Exception as e:
+                            logger.error(f"Failed to extract original audio for segment {i}: {e}")
+                            st.toast("Failed to extract audio.", icon="🚨")
+                            st.session_state.action_status[action_key] = "error"
+                        finally:
+                            st.rerun()
+                    else: # idle or error
+                        if placeholder.button("🎧", key=f"listen_original_{segment_id}", help="Listen to original audio segment"):
+                            st.session_state.action_status[action_key] = "loading"
+                            st.rerun()
+                with action_cols[2]:
+                    action_key = f"translate_{segment_id}"
+                    status = st.session_state.action_status.get(action_key, "idle")
+                    placeholder = st.empty()
+
+                    if status == "loading":
+                        placeholder.text("...")
+                        try:
+                            transcript_to_translate = st.session_state.get(f"transcript_text_{segment_id}", segment.get("transcript", ""))
+                            st.session_state["segments"][i]["transcript"] = transcript_to_translate
+                            openai_handler = self.get_openai_handler()
+                            translation = openai_handler.translate(transcript_to_translate, language=target_lang)
+                            st.session_state["segments"][i]["translation"] = translation
+                            self.save_segments()
+                            st.toast("Translated.", icon="✔️")
+                            st.session_state.action_status[action_key] = "idle"
+                        except Exception as e:
+                            logger.error(f"Failed to translate segment {i}: {e}")
+                            st.toast("Failed to translate.", icon="🚨")
+                            st.session_state.action_status[action_key] = "error"
+                        finally:
+                            st.rerun()
+                    else: # idle or error
+                        if placeholder.button("🌐", key=f"translate_seg_{segment_id}", help="Translate segment"):
+                            if not target_lang:
+                                st.toast("Please select a target language first!", icon="🚨")
+                            else:
+                                st.session_state.action_status[action_key] = "loading"
+                                st.rerun()
+                with action_cols[3]:
+                    action_key = f"audio_{segment_id}"
+                    status = st.session_state.action_status.get(action_key, "idle")
+                    placeholder = st.empty()
+
+                    if status == "loading":
+                        placeholder.text("...")
+                        try:
+                            transcript_text = st.session_state.get(f"transcript_text_{segment_id}", segment.get("transcript", ""))
+                            translation_text = st.session_state.get(f"translation_text_{segment_id}", segment.get("translation", ""))
+                            text_to_dub = translation_text or transcript_text
+
+                            st.session_state["segments"][i]["transcript"] = transcript_text
+                            st.session_state["segments"][i]["translation"] = translation_text
+                            
+                            lang_code = get_lang_codes()[target_lang]
+                            speaker = st.session_state.get(f"speaker_{segment_id}", segment.get("speaker", "AP"))
+                            st.session_state["segments"][i]["speaker"] = speaker
+                            
+                            audio_file_path = dub_single_segment(
+                                text=text_to_dub,
+                                lang_code=lang_code,
+                                speaker=speaker,
+                                gtts_creds=dict(st.secrets["GOOGLE_CREDENTIALS"]),
+                                start_time=segment["start"],
+                                end_time=segment["end"],
+                            )
+                            
+                            if audio_file_path:
+                                st.session_state[f"preview_audio_{segment_id}"] = audio_file_path
+                                st.toast("Audio generated.", icon="✔️")
+                                st.session_state.action_status[action_key] = "idle"
+                            else:
+                                raise Exception("Failed to generate audio file.")
+                        except Exception as e:
+                            logger.error(f"Failed to generate audio for segment {i}: {e}")
+                            st.toast("Failed to generate audio.", icon="🚨")
+                            st.session_state.action_status[action_key] = "error"
+                        finally:
+                            st.rerun()
+                    else: # idle or error
+                        if placeholder.button("🗣️", key=f"regen_audio_{segment_id}", help="Generate audio for translation"):
+                            if not target_lang:
+                                st.toast("Please select a target language first!", icon="🚨")
+                            else:
+                                st.session_state.action_status[action_key] = "loading"
+                                st.rerun()
+                with action_cols[4]:
+                    if st.button("🗑️", key=f"delete_seg_{segment_id}", help="Delete segment"):
+                        st.session_state['confirm_delete_segment'] = i
+                        st.rerun()
+
+                _, audio_col2, audio_col3, _ = st.columns([1.2, 3.6, 3.6, 0.8])
+                with audio_col2:
+                    if st.session_state.get(f"original_audio_preview_{segment_id}"):
+                        st.audio(st.session_state[f"original_audio_preview_{segment_id}"], format="audio/mp3")
+                with audio_col3:
+                    if st.session_state.get(f"preview_audio_{segment_id}"):
+                        st.audio(st.session_state[f"preview_audio_{segment_id}"])
+
+                col1, col2, col3, col4 = st.columns([1.2, 3.6, 3.6, 0.8])
 
                 with col1:
-                    def update_segment_time(idx=i):
+                    def update_segment_time(seg_id=segment_id):
                         try:
-                            start_ms = srt_time_to_ms(st.session_state[f"start_time_{idx}"])
-                            end_ms = srt_time_to_ms(st.session_state[f"end_time_{idx}"])
+                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
+                            start_ms = srt_time_to_ms(st.session_state[f"start_time_{seg_id}"])
+                            end_ms = srt_time_to_ms(st.session_state[f"end_time_{seg_id}"])
                             st.session_state["segments"][idx]["start"] = start_ms
                             st.session_state["segments"][idx]["end"] = end_ms
                             self.save_segments()
-                        except Exception as e:
-                            st.error(f"Invalid time format for segment {idx+1}. Use HH:MM:SS,ms. Error: {e}")
+                        except (StopIteration, Exception) as e:
+                            st.error(f"Error updating time for segment. Use HH:MM:SS,ms. Error: {e}")
 
                     st.text_input(
                         "Start Time",
                         value=ms_to_srt_time(segment['start']),
-                        key=f"start_time_{i}",
+                        key=f"start_time_{segment_id}",
                         on_change=update_segment_time,
                         label_visibility="collapsed"
                     )
                     st.text_input(
                         "End Time",
                         value=ms_to_srt_time(segment['end']),
-                        key=f"end_time_{i}",
+                        key=f"end_time_{segment_id}",
                         on_change=update_segment_time,
                         label_visibility="collapsed"
                     )
 
                 with col2:
-                    def update_segment_text(idx=i):
-                        st.session_state["segments"][idx]["transcript"] = st.session_state[f"transcript_text_{idx}"]
-                        self.save_segments()
+                    def update_segment_text(seg_id=segment_id):
+                        try:
+                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
+                            st.session_state["segments"][idx]["transcript"] = st.session_state[f"transcript_text_{seg_id}"]
+                            self.save_segments()
+                        except StopIteration:
+                            pass # Segment not found, maybe deleted.
                     st.text_area(
                         "Transcribed Text",
                         value=segment.get("transcript", ""),
-                        key=f"transcript_text_{i}",
+                        key=f"transcript_text_{segment_id}",
                         on_change=update_segment_text,
                         label_visibility="collapsed",
                         height=120
                     )
 
                 with col3:
-                    def update_segment_translation(idx=i):
-                        st.session_state["segments"][idx]["translation"] = st.session_state[f"translation_text_{idx}"]
-                        self.save_segments()
+                    def update_segment_translation(seg_id=segment_id):
+                        try:
+                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
+                            st.session_state["segments"][idx]["translation"] = st.session_state[f"translation_text_{seg_id}"]
+                            self.save_segments()
+                        except StopIteration:
+                            pass # Segment not found, maybe deleted.
                     st.text_area(
                         "Translated Text",
                         value=segment.get("translation", ""),
-                        key=f"translation_text_{i}",
+                        key=f"translation_text_{segment_id}",
                         on_change=update_segment_translation,
                         label_visibility="collapsed",
                         height=120
                     )
 
                 with col4:
-                    def update_segment_speaker(idx=i):
-                        st.session_state["segments"][idx]["speaker"] = st.session_state[f"speaker_{idx}"]
-                        self.save_segments()
+                    def update_segment_speaker(seg_id=segment_id):
+                        try:
+                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
+                            st.session_state["segments"][idx]["speaker"] = st.session_state[f"speaker_{seg_id}"]
+                            self.save_segments()
+                        except StopIteration:
+                            pass # Segment not found, maybe deleted.
                     st.selectbox(
                         "Speaker",
                         options=SPEAKERS,
                         index=SPEAKERS.index(segment.get("speaker", "AP")),
-                        key=f"speaker_{i}",
+                        key=f"speaker_{segment_id}",
                         on_change=update_segment_speaker,
                         label_visibility="collapsed"
                     )
 
-                with col5:
-                    if st.button("Translate", key=f"translate_seg_{i}"):
-                        if not target_lang:
-                            st.error("Please select a target language first!")
-                        else:
-                            with st.spinner("Translating..."):
-                                transcript_to_translate = st.session_state[f"transcript_text_{i}"]
-                                st.session_state["segments"][i]["transcript"] = transcript_to_translate
-                                openai_handler = self.get_openai_handler()
-                                translation = openai_handler.translate(transcript_to_translate, language=target_lang)
-                                st.session_state["segments"][i]["translation"] = translation
-                                self.save_segments()
-                                st.toast("Translated.")
-                                st.rerun()
-
-                    if st.button("Audio", key=f"regen_audio_{i}"):
-                        if not target_lang:
-                            st.error("Please select a target language first!")
-                        else:
-                            with st.spinner("Generating audio..."):
-                                text_to_dub = st.session_state.get(f"translation_text_{i}") or st.session_state.get(f"transcript_text_{i}")
-                                st.session_state["segments"][i]["translation"] = st.session_state.get(f"translation_text_{i}", "")
-                                st.session_state["segments"][i]["transcript"] = st.session_state.get(f"transcript_text_{i}", "")
-                                
-                                lang_code = get_lang_codes()[target_lang]
-                                speaker = st.session_state[f"speaker_{i}"]
-                                
-                                audio_file_path = dub_single_segment(
-                                    text=text_to_dub,
-                                    lang_code=lang_code,
-                                    speaker=speaker,
-                                    gtts_creds=dict(st.secrets["GOOGLE_CREDENTIALS"]),
-                                    start_time=segment["start"],
-                                    end_time=segment["end"],
-                                )
-                                
-                                if audio_file_path:
-                                    st.session_state[f"preview_audio_{i}"] = audio_file_path
-                                else:
-                                    st.error("Failed to generate audio.")
-                    
-                    if st.session_state.get(f"preview_audio_{i}"):
-                        st.audio(st.session_state[f"preview_audio_{i}"])
-                    
-                    if st.session_state.get('confirm_delete_segment') == i:
-                        st.warning("Do you want to proceed?")
-                        col_yes, col_no = st.columns(2)
-                        with col_yes:
-                            if st.button("Yes", key=f"confirm_delete_{i}"):
-                                del st.session_state["segments"][i]
-                                st.session_state['confirm_delete_segment'] = None
-                                self.save_segments()
-                                st.rerun()
-                        with col_no:
-                            if st.button("No", key=f"cancel_delete_{i}"):
-                                st.session_state['confirm_delete_segment'] = None
-                                st.rerun()
-                    else:
-                        if st.button("🗑️", key=f"delete_seg_{i}", help="Delete segment"):
-                            st.session_state['confirm_delete_segment'] = i
-                            st.rerun()
 
                 st.divider()
 
-                if st.button("＋", key=f"add_after_{i}", help="Add segment after"):
-                    self.add_segment(i + 1)
+            if st.button("＋", key="add_at_end", help="Add segment at end"):
+                self.add_segment(len(st.session_state["segments"]))
 
 
     def dubbing_section(self, target_lang):
