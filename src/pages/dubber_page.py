@@ -1,17 +1,20 @@
 import json
 import os
+import shutil
 import time
+from datetime import datetime, timedelta
 from typing import List
 
 import streamlit as st
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
-from src.logger import logger
+
 from src.cmd_utils import (
     convert_audio,
     download_video,
     extract_audio,
 )
+from src.database import DuckDBManager
 from src.dub import (
     SPEAKERS,
     create_dubbed_video,
@@ -19,6 +22,7 @@ from src.dub import (
     get_lang_codes,
     process_srt_and_join,
 )
+from src.logger import logger
 from src.oai import OpenAIHandler
 from src.pages.base_page import BasePage
 from src.srt_ui import subtitle_editor
@@ -48,28 +52,37 @@ def srt_time_to_ms(time_str: str) -> int:
 class DubberPage(BasePage):
     DEFAULT_WIDTH = 60
     SIDE = max((100 - DEFAULT_WIDTH) / 2, 0.01)
-    
+
     def __init__(self):
         self.workdir = os.environ.get("WORKDIR", "/tmp")
-        self.init_session()
-    
-    def init_session(self):
-        if "folder_name" not in st.session_state:
-            st.session_state.folder_name = f"{self.workdir}/session_{int(time.time())}"
+        self.db_manager = DuckDBManager(db_path=self.workdir)
+        if "progress_loaded" not in st.session_state:
+            st.session_state.progress_loaded = False
+        if "user_id" not in st.session_state:
+            st.session_state.user_id = None
+        if "last_save_time" not in st.session_state:
+            st.session_state.last_save_time = None
+
+    def init_session(self, from_restore=False):
+        if not from_restore:
+            # For new sessions (e.g., after clicking Reset)
+            session_name = st.session_state.get("user_id") or f"session_{int(time.time())}"
+            st.session_state.folder_name = os.path.join(self.workdir, session_name)
             os.makedirs(st.session_state.folder_name, exist_ok=True)
-            logger.info(f"Created folder: {st.session_state.folder_name}")
-            
+            logger.info(f"Created new session folder: {st.session_state.folder_name}")
+        elif "folder_name" not in st.session_state:
+            # Edge case: restored but no folder name. Start a new session.
+            st.session_state.folder_name = os.path.join(
+                self.workdir, f"session_{int(time.time())}"
+            )
+            os.makedirs(st.session_state.folder_name, exist_ok=True)
+
         self.rootdir = st.session_state.folder_name
         self.input_path = os.path.join(self.rootdir, "input.mp4")
         self.audio_path = os.path.join(self.rootdir, "input_audio.mp3")
         self.output_path = os.path.join(self.rootdir, "output.mp4")
         st.session_state["srt_path"] = os.path.join(self.rootdir, "subtitles.srt")
         st.session_state["srt_df_path"] = os.path.join(self.rootdir, "subtitles_df.csv")
-        
-        segments_file = os.path.join(self.rootdir, "segments.json")
-        if "segments" not in st.session_state and os.path.exists(segments_file):
-            with open(segments_file, "r") as f:
-                st.session_state["segments"] = json.load(f)
     
     def save_segments(self):
         """Saves the current segments to a JSON file."""
@@ -100,24 +113,112 @@ class DubberPage(BasePage):
         self.save_segments()
         st.rerun()
 
-    def setup_session_management(self):
-        st.sidebar.title("Session Management")
-        new_session_id = st.sidebar.text_input("Enter Session ID to load:", key="session_id_input")
+    def _save_progress(self):
+        if not st.session_state.get("user_id"):
+            return
+
+        source_path = st.session_state.get("src_vid")
+        if not source_path and os.path.exists(self.audio_path):
+            source_path = self.audio_path
+
+        dubbed_path = st.session_state.get("final_audio_path")
+        if not dubbed_path and os.path.exists(self.output_path):
+            dubbed_path = self.output_path
+
+        self.db_manager.save_progress(
+            user_id=st.session_state.user_id,
+            source_file_path=source_path,
+            target_language=st.session_state.get("target_language_selectbox"),
+            dubbed_file_path=dubbed_path,
+            segments=st.session_state.get("segments", []),
+        )
+        st.session_state.last_save_time = datetime.now()
+        st.toast("Progress saved!", icon="💾")
+
+    def _autosave(self):
+        now = datetime.now()
+        if st.session_state.last_save_time is None:
+            st.session_state.last_save_time = now
+
+        if now - st.session_state.last_save_time > timedelta(seconds=10):
+            self._save_progress()
+
+    def _restore_progress(self, user_id):
+        progress = self.db_manager.restore_progress(user_id)
+        if progress:
+            st.session_state.user_id = user_id
+            st.session_state.progress_loaded = True
+
+            source_path = progress.get("source_file_path")
+            if source_path and os.path.exists(source_path):
+                st.session_state.folder_name = os.path.dirname(source_path)
+                if source_path.endswith(".mp4"):
+                    st.session_state["src_vid"] = source_path
+            
+            self.init_session(from_restore=True)
+
+            st.session_state["segments"] = progress.get("segments", [])
+            st.session_state["target_language_selectbox"] = progress.get("target_language")
+
+            dubbed_path = progress.get("dubbed_file_path")
+            if dubbed_path and os.path.exists(dubbed_path):
+                if dubbed_path.endswith(".mp4"):
+                    self.output_path = dubbed_path
+                else:
+                    st.session_state["final_audio_path"] = dubbed_path
+
+            st.success(f"Progress for user '{user_id}' restored.")
+            st.rerun()
+        else:
+            st.error(f"No saved progress found for user '{user_id}'. Starting a new session.")
+            self._reset_progress(user_id, new_session=True)
+
+    def _reset_progress(self, user_id, new_session=False):
+        if not new_session:
+            self.db_manager.reset_progress(user_id)
+
+        # Remove the session directory to clear all media files
+        session_folder = os.path.join(self.workdir, user_id)
+        if os.path.exists(session_folder):
+            try:
+                shutil.rmtree(session_folder)
+                logger.info(f"Removed session folder: {session_folder}")
+            except OSError as e:
+                logger.error(f"Error removing session folder {session_folder}: {e}")
+
+        # Clear session state for a fresh start
+        keys_to_clear = [
+            "folder_name", "segments", "src_vid", "final_audio_path",
+            "target_language_selectbox", "action_status", "confirm_delete_segment", "last_save_time"
+        ]
+        for k in list(st.session_state.keys()):
+            if k.startswith("preview_audio_") or k.startswith("original_audio_preview_"):
+                keys_to_clear.append(k)
         
-        if new_session_id and new_session_id.startswith("session_"):
-            session_path = f"{self.workdir}/{new_session_id}"
-            if os.path.exists(session_path):
-                st.session_state.folder_name = session_path
-                st.sidebar.success(f"Successfully loaded session: {new_session_id}")
-                for file in os.listdir(session_path):
-                    if file == "input.mp4":
-                        st.session_state["src_vid"] = f"{session_path}/input.mp4"
-                        break
-            else:
-                st.sidebar.error("Session not found!")
-        
-        st.sidebar.markdown("Current Session ID (Copy and save):")
-        st.sidebar.code(os.path.basename(st.session_state.folder_name), language="text")
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        st.session_state.user_id = user_id
+        st.session_state.progress_loaded = True
+        self.init_session(from_restore=False)
+        if not new_session:
+            st.success(f"Session for user '{user_id}' has been reset.")
+        st.rerun()
+
+    def render_login_section(self):
+        st.subheader("Start or Resume a Session")
+        user_id = st.text_input("Enter your Email Id correctly:", key="user_id_input")
+
+        user_id_valid = user_id and len(user_id) >= 3
+
+        col1, col2, _ = st.columns([1, 1, 3])
+        with col1:
+            if st.button("Restore", disabled=not user_id_valid):
+                self._restore_progress(user_id)
+        with col2:
+            if st.button("Reset", disabled=not user_id_valid):
+                self._reset_progress(user_id)
     
     def chunk_audio_at_silence(self, audio_path: str, max_chunk_duration_ms: int = 180000) -> List[dict]:
         """
@@ -330,11 +431,10 @@ class DubberPage(BasePage):
                 confirm_delete_dialog()
 
             # Header for the segments table
-            cols = st.columns([1.2, 3.6, 3.6, 0.8])
-            cols[0].markdown("**Time**")
+            cols = st.columns([1.2, 4.0, 4.0])
+            cols[0].markdown("**Time & Speaker**")
             cols[1].markdown("**Transcribed Text**")
             cols[2].markdown("**Translated Text**")
-            cols[3].markdown("**Speaker**")
             st.divider()
 
             for i, segment in enumerate(st.session_state["segments"]):
@@ -456,7 +556,7 @@ class DubberPage(BasePage):
                         st.session_state['confirm_delete_segment'] = i
                         st.rerun()
 
-                _, audio_col2, audio_col3, _ = st.columns([1.2, 3.6, 3.6, 0.8])
+                _, audio_col2, audio_col3 = st.columns([1.2, 4.0, 4.0])
                 with audio_col2:
                     if st.session_state.get(f"original_audio_preview_{segment_id}"):
                         st.audio(st.session_state[f"original_audio_preview_{segment_id}"], format="audio/mp3")
@@ -464,7 +564,7 @@ class DubberPage(BasePage):
                     if st.session_state.get(f"preview_audio_{segment_id}"):
                         st.audio(st.session_state[f"preview_audio_{segment_id}"])
 
-                col1, col2, col3, col4 = st.columns([1.2, 3.6, 3.6, 0.8])
+                col1, col2, col3 = st.columns([1.2, 4.0, 4.0])
 
                 with col1:
                     def update_segment_time(seg_id=segment_id):
@@ -493,41 +593,6 @@ class DubberPage(BasePage):
                         label_visibility="collapsed"
                     )
 
-                with col2:
-                    def update_segment_text(seg_id=segment_id):
-                        try:
-                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
-                            st.session_state["segments"][idx]["transcript"] = st.session_state[f"transcript_text_{seg_id}"]
-                            self.save_segments()
-                        except StopIteration:
-                            pass # Segment not found, maybe deleted.
-                    st.text_area(
-                        "Transcribed Text",
-                        value=segment.get("transcript", ""),
-                        key=f"transcript_text_{segment_id}",
-                        on_change=update_segment_text,
-                        label_visibility="collapsed",
-                        height=120
-                    )
-
-                with col3:
-                    def update_segment_translation(seg_id=segment_id):
-                        try:
-                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
-                            st.session_state["segments"][idx]["translation"] = st.session_state[f"translation_text_{seg_id}"]
-                            self.save_segments()
-                        except StopIteration:
-                            pass # Segment not found, maybe deleted.
-                    st.text_area(
-                        "Translated Text",
-                        value=segment.get("translation", ""),
-                        key=f"translation_text_{segment_id}",
-                        on_change=update_segment_translation,
-                        label_visibility="collapsed",
-                        height=120
-                    )
-
-                with col4:
                     def update_segment_speaker(seg_id=segment_id):
                         try:
                             idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
@@ -544,6 +609,39 @@ class DubberPage(BasePage):
                         label_visibility="collapsed"
                     )
 
+                with col2:
+                    def update_segment_text(seg_id=segment_id):
+                        try:
+                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
+                            st.session_state["segments"][idx]["transcript"] = st.session_state[f"transcript_text_{seg_id}"]
+                            self.save_segments()
+                        except StopIteration:
+                            pass # Segment not found, maybe deleted.
+                    st.text_area(
+                        "Transcribed Text",
+                        value=segment.get("transcript", ""),
+                        key=f"transcript_text_{segment_id}",
+                        on_change=update_segment_text,
+                        label_visibility="collapsed",
+                        height=155
+                    )
+
+                with col3:
+                    def update_segment_translation(seg_id=segment_id):
+                        try:
+                            idx = next(i for i, s in enumerate(st.session_state["segments"]) if s.get("id") == seg_id)
+                            st.session_state["segments"][idx]["translation"] = st.session_state[f"translation_text_{seg_id}"]
+                            self.save_segments()
+                        except StopIteration:
+                            pass # Segment not found, maybe deleted.
+                    st.text_area(
+                        "Translated Text",
+                        value=segment.get("translation", ""),
+                        key=f"translation_text_{segment_id}",
+                        on_change=update_segment_translation,
+                        label_visibility="collapsed",
+                        height=155
+                    )
 
                 st.divider()
 
@@ -648,27 +746,43 @@ class DubberPage(BasePage):
         _, container, _ = st.columns([self.SIDE, self.DEFAULT_WIDTH // 2, self.SIDE])
         with container:
             st.title("Video/Audio Dubbing")
-        
-        self.setup_session_management()
-        
+
+        if not st.session_state.get("progress_loaded"):
+            _, container, _ = st.columns([self.SIDE, self.DEFAULT_WIDTH // 2, self.SIDE])
+            with container:
+                self.render_login_section()
+            return
+
+        # If progress is loaded, initialize paths and render the main app
+        self.init_session(from_restore=True)
+        self._autosave()
+
         self.upload_media_section()
 
         if os.path.exists(self.audio_path) and os.path.getsize(self.audio_path) > 0:
             _, container, _ = st.columns([self.SIDE, self.DEFAULT_WIDTH // 2, self.SIDE])
-            if st.session_state.get("src_vid") and os.path.exists(
-                st.session_state["src_vid"]
-            ):
-                video_data = self.load_video_data(st.session_state["src_vid"])
-                container.video(video_data)
-            else:
-                audio_data = self.load_video_data(self.audio_path)
-                container.audio(audio_data)
+            with container:
+                if st.session_state.get("src_vid") and os.path.exists(st.session_state["src_vid"]):
+                    video_data = self.load_video_data(st.session_state["src_vid"])
+                    st.video(video_data)
+                else:
+                    audio_data = self.load_video_data(self.audio_path)
+                    st.audio(audio_data)
+
+            lang_keys = list(get_lang_codes().keys())
+            lang_index = None
+            try:
+                current_lang = st.session_state.get("target_language_selectbox")
+                if current_lang in lang_keys:
+                    lang_index = lang_keys.index(current_lang)
+            except (ValueError, TypeError):
+                lang_index = None
 
             target_lang = st.selectbox(
                 "Select Target Language for Translation",
-                list(get_lang_codes().keys()),
-                index=None,
-                key="target_language_selectbox"
+                lang_keys,
+                index=lang_index,
+                key="target_language_selectbox",
             )
 
             self.segments_section(target_lang)

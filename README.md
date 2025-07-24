@@ -1,3 +1,6 @@
+## ABOUT
+1. Host on `dub.acharyaprashant.org`
+
 ### ALL STREAMLIT FUNCTIONS
 
 ### Pre Requisites
@@ -12,33 +15,20 @@
 
 ### Installation
 
-To install the required dependencies, run:
-
-**Option 1: Using conda (recommended)**
 ```bash
-conda env create -f conda.yml
-conda activate sr
-```
+python3.13 -m venv .venv
+source .venv/bin/activate
+poetry env use $(pwd)/.venv/bin/python
 
-**Option 2: Using Poetry (modern Python dependency management)**
-```bash
 # Install Poetry if you haven't already
 curl -sSL https://install.python-poetry.org | python3 -
 
 # Initialize Poetry project and install dependencies
 poetry init --no-interaction
-poetry add $(cat requirements.txt | grep -v "^#" | tr '\n' ' ')
-poetry install
+rm -rf poetry.lock && poetry install
 
 # Activate Poetry environment
 poetry shell
-```
-
-**Option 3: Using virtual environment**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
 ```
 
 ### Running the UI
@@ -46,7 +36,14 @@ pip install -r requirements.txt
 To start the application, execute:
 
 ```bash
-streamlit run ask_ap.py
+> aider --model gemini
+
+> poetry run streamlit run src/app.py
+```
+
+To remove state:
+```
+> rm /tmp/dubber_progress.db  
 ```
 
 ### Asking a Question
@@ -59,7 +56,7 @@ python -m src.answer "What is suffering?"
 
 ### Code
 
-1. Entry point is `ask_ap.py` file
+1. Entry point is `src/app.py` file
 
 ### Setup TTS Google Creds
 
@@ -154,3 +151,26 @@ universe_domain = "googleapis.com"
 ```
 
 > ⚠️ **Important**: Use triple quotes (`"""..."""`) for the private key to handle newlines properly.
+
+## Deployment
+Code Only Deployment
+
+```
+> ssh c2app1
+> cd pm2/streamlit
+> git checkout -f
+> git pull
+> git log
+> pm2 list
+> pm2 restart streamlit-dub
+> pm2 logs streamlit-dub
+```
+
+Password Update
+```
+> ssh c2app1
+> sudo sh -c "echo -n 'internal:' >> /secrets/secret_dub_basic_auth_password"
+> sudo sh -c "openssl passwd -apr1 >> /secrets/secret_dub_basic_auth_password"
+```
+
+

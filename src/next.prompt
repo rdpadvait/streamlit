@@ -1,0 +1,55 @@
+I tried to translate a hindi text (from hindi video) into Punjabi language. But the translated-text is generated in Devnagiri (hindi) script, though it pronounces language like Punjabi. Example: "पिछले 100-200 सालां 'च इह बहुत वड्डी गल बन गई ऐ कि जिंदगी तां ओहदों ही जीती समझी जानदी ऐ जदो बंदा हर किस्म दे तजुर्बे कर लवे।" It should be translated in Pubjabi script like: "ਪਿਛਲੇ 100-200 ਸਾਲਾਂ ’ਚ ਇਹ ਬਹੁਤ ਵੱਡੀ ਗੱਲ ਬਣ ਗਈ ਏ ਕਿ ਜ਼ਿੰਦਗੀ ਤਾਂ ਉਹਦੋਂ ਹੀ ਜੀਤੀ ਸਮਝੀ ਜਾਂਦੀ ਏ ਜਦੋਂ ਬੰਦਾ ਹਰ ਕਿਸਮ ਦੇ ਤਜਰਬੇ ਕਰ ਲਵੇ।" 
+
+--
+We provide a dropdown of languages for translation. At which part of code are all those languages listed?
+
+--
+There is a part of code where system-prompt for translation via OpenAI is generated. Put a logger/print statement for `system-prompt`.
+
+--
+In "Dubber" page, Create support for saving user-progress in DuckDB.
+
+Requirements:
+- User opens dubber page to see only 3 UI elements one-beside-other, nothing else:
+    1. Mandatory input userId (a string with min threshold characters)
+    2. A button 'Restore' beside it
+        a. Not clickable unless userId is entered
+        b. Clicking on it will load entire PRE-FILLED entire dubbing page using data available in DuckDB corresponding to this user.
+    3. A button 'Reset' beside it
+        a. Not clickable unless userId is entered
+        b. Clicking on it will clear the data corresponding to this user and load fresh dubbing page.
+- What all things to save corresponding to this userId:
+    1. Path to the main source video/audio files being dubbed
+    2. Target language selected for translation
+    3. List of all segments generated from the audio. For each segment, you must save:
+        a. Start and end timestamps
+        b. The original transcribed text
+        c. The translated text
+        d. The selected speaker (AP, MALE, FEMALE)
+    4. Path to the final dubbed audio/video
+- Progress saving frequency:
+    1. Auotsave every 5 minutes
+    2. Upon autosave, show a small notification
+    3. If user wants to reset, there is a button 'Reset' at the top of the page
+
+--
+Set the frequency of auto saving to every 10seconds
+
+--
+Progress is not properly saved in Duck DB. Segments, etc many things are not saved at all.
+
+Also received this error:
+2025-07-24 14:59:19,513 - Connected to DuckDB at /tmp/dubber_progress.db
+2025-07-24 14:59:19,515 - Failed to connect to DuckDB: Parser Error: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT
+2025-07-24 14:59:24,940 - Connected to DuckDB at /tmp/dubber_progress.db
+2025-07-24 14:59:24,941 - Failed to connect to DuckDB: Parser Error: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT
+2025-07-24 14:59:27,866 - Connected to DuckDB at /tmp/dubber_progress.db
+2025-07-24 14:59:27,867 - Failed to connect to DuckDB: Parser Error: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT
+2025-07-24 14:59:27,872 - Created new session folder: /tmp/gita
+2025-07-24 14:59:27,945 - Connected to DuckDB at /tmp/dubber_progress.db
+2025-07-24 14:59:27,946 - Failed to connect to DuckDB: Parser Error: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT
+
+--
+When I click on 'Reset' button, page is still showing some old prefilled audio. Upon 'Reset' all data corresponding to that userId must be deleted and a fresh page must be shown.
+
+--

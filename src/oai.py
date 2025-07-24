@@ -7,6 +7,8 @@ from openai import OpenAI
 
 from src.logger import logger
 
+LANGUAGE_SCRIPT_MAPPING = {"punjabi": " in Gurmukhi script"}
+
 
 class OpenAIHandler:
     def __init__(self, configs_dir: Optional[str] = "configs"):
@@ -19,14 +21,17 @@ class OpenAIHandler:
     def translate(self, input_text: str, language: str = "English", **kwargs) -> str:
         if not input_text:
             return ""
-        logger.info(f"Translating to {language}: ```{input_text}```")
+        
+        script_info = LANGUAGE_SCRIPT_MAPPING.get(language.lower(), "")
+        
+        logger.info(f"Translating to {language}{script_info}: ```{input_text}```")
         config = OmegaConf.to_container(self.translation_config, resolve=True)
         for key, value in kwargs.items():
             if key in config:
                 config[key] = value
                 logger.info(f"Overriding config parameter {key} with value {value}")
                 
-        system_prompt = config["system_prompt"].format(language=language)  
+        system_prompt = config["system_prompt"].format(language=language, script_info=script_info)
         
         try:
             response = self.client.chat.completions.create(
